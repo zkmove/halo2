@@ -8,13 +8,13 @@ use halo2_middleware::{lookup, permutation::ArgumentMid, shuffle};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct QueryBack {
     /// Query index
-    pub(crate) index: usize,
+    pub index: usize,
     /// Column index
-    pub(crate) column_index: usize,
+    pub column_index: usize,
     /// The type of the column.
-    pub(crate) column_type: Any,
+    pub column_type: Any,
     /// Rotation of this query
-    pub(crate) rotation: Rotation,
+    pub rotation: Rotation,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -51,59 +51,59 @@ impl Variable for VarBack {
     }
 }
 
-pub(crate) type ExpressionBack<F> = Expression<F, VarBack>;
-pub(crate) type GateBack<F> = Gate<F, VarBack>;
-pub(crate) type LookupArgumentBack<F> = lookup::Argument<F, VarBack>;
-pub(crate) type ShuffleArgumentBack<F> = shuffle::Argument<F, VarBack>;
-pub(crate) type PermutationArgumentBack = ArgumentMid;
+pub type ExpressionBack<F> = Expression<F, VarBack>;
+pub type GateBack<F> = Gate<F, VarBack>;
+pub type LookupArgumentBack<F> = lookup::Argument<F, VarBack>;
+pub type ShuffleArgumentBack<F> = shuffle::Argument<F, VarBack>;
+pub type PermutationArgumentBack = ArgumentMid;
 
 /// This is a description of the circuit environment, such as the gate, column and permutation
 /// arrangements.  This type is internal to the backend and will appear in the verifying key.
 #[derive(Debug, Clone)]
 pub struct ConstraintSystemBack<F: Field> {
-    pub(crate) num_fixed_columns: usize,
-    pub(crate) num_advice_columns: usize,
-    pub(crate) num_instance_columns: usize,
-    pub(crate) num_challenges: usize,
+    pub num_fixed_columns: usize,
+    pub num_advice_columns: usize,
+    pub num_instance_columns: usize,
+    pub num_challenges: usize,
 
     /// Contains the index of each advice column that is left unblinded.
-    pub(crate) unblinded_advice_columns: Vec<usize>,
+    pub unblinded_advice_columns: Vec<usize>,
 
     /// Contains the phase for each advice column. Should have same length as num_advice_columns.
-    pub(crate) advice_column_phase: Vec<u8>,
+    pub advice_column_phase: Vec<u8>,
     /// Contains the phase for each challenge. Should have same length as num_challenges.
-    pub(crate) challenge_phase: Vec<u8>,
+    pub challenge_phase: Vec<u8>,
 
-    pub(crate) gates: Vec<GateBack<F>>,
-    pub(crate) advice_queries: Vec<(ColumnMid, Rotation)>,
+    pub gates: Vec<GateBack<F>>,
+    pub advice_queries: Vec<(ColumnMid, Rotation)>,
     // Contains an integer for each advice column
     // identifying how many distinct queries it has
     // so far; should be same length as num_advice_columns.
-    pub(crate) num_advice_queries: Vec<usize>,
-    pub(crate) instance_queries: Vec<(ColumnMid, Rotation)>,
-    pub(crate) fixed_queries: Vec<(ColumnMid, Rotation)>,
+    pub num_advice_queries: Vec<usize>,
+    pub instance_queries: Vec<(ColumnMid, Rotation)>,
+    pub fixed_queries: Vec<(ColumnMid, Rotation)>,
 
     // Permutation argument for performing equality constraints
-    pub(crate) permutation: PermutationArgumentBack,
+    pub permutation: PermutationArgumentBack,
 
     // Vector of lookup arguments, where each corresponds to a sequence of
     // input expressions and a sequence of table expressions involved in the lookup.
-    pub(crate) lookups: Vec<LookupArgumentBack<F>>,
+    pub lookups: Vec<LookupArgumentBack<F>>,
 
     // Vector of shuffle arguments, where each corresponds to a sequence of
     // input expressions and a sequence of shuffle expressions involved in the shuffle.
-    pub(crate) shuffles: Vec<ShuffleArgumentBack<F>>,
+    pub shuffles: Vec<ShuffleArgumentBack<F>>,
 
     // The minimum degree required by the circuit, which can be set to a
     // larger amount than actually needed. This can be used, for example, to
     // force the permutation argument to involve more columns in the same set.
-    pub(crate) minimum_degree: Option<usize>,
+    pub minimum_degree: Option<usize>,
 }
 
 impl<F: Field> ConstraintSystemBack<F> {
     /// Compute the degree of the constraint system (the maximum degree of all
     /// constraints).
-    pub(crate) fn degree(&self) -> usize {
+    pub fn degree(&self) -> usize {
         // The permutation argument will serve alongside the gates, so must be
         // accounted for.
         let mut degree = permutation_argument_required_degree();
@@ -230,6 +230,40 @@ impl<F: Field> ConstraintSystemBack<F> {
             shuffles: &self.shuffles,
             minimum_degree: &self.minimum_degree,
         }
+    }
+
+    pub fn gates(&self) -> &[GateBack<F>] {
+        &self.gates
+    }
+    pub fn lookups(&self) -> &[LookupArgumentBack<F>] {
+        &self.lookups
+    }
+    pub fn shuffles(&self) -> &[ShuffleArgumentBack<F>] {
+        &self.shuffles
+    }
+    pub fn advice_queries(&self) -> &[(ColumnMid, Rotation)] {
+        &self.advice_queries
+    }
+    pub fn fixed_queries(&self) -> &[(ColumnMid, Rotation)] {
+        &self.fixed_queries
+    }
+    pub fn instance_queries(&self) -> &[(ColumnMid, Rotation)] {
+        &self.instance_queries
+    }
+    pub fn permutation(&self) -> &PermutationArgumentBack {
+        &self.permutation
+    }
+    pub fn num_fixed_columns(&self) -> usize {
+        self.num_fixed_columns
+    }
+    pub fn num_instance_columns(&self) -> usize {
+        self.num_instance_columns
+    }
+    pub fn advice_column_phase(&self) -> &[u8] {
+        &self.advice_column_phase
+    }
+    pub fn challenge_phase(&self) -> &[u8] {
+        &self.challenge_phase
     }
 }
 
