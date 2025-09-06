@@ -13,7 +13,9 @@ use crate::helpers::{
     polynomial_slice_byte_length, read_polynomial_vec, write_polynomial_slice, SerdeCurveAffine,
     SerdeFormat, SerdePrimeField,
 };
-use crate::plonk::circuit::{ConstraintSystemBack, PinnedConstraintSystem};
+pub use crate::plonk::circuit::ConstraintSystemBack;
+pub use crate::plonk::circuit::ExpressionBack;
+use crate::plonk::circuit::PinnedConstraintSystem;
 use crate::poly::{
     Coeff, EvaluationDomain, ExtendedLagrangeCoeff, LagrangeCoeff, PinnedEvaluationDomain,
     Polynomial,
@@ -35,6 +37,7 @@ mod vanishing;
 pub mod verifier;
 
 pub use error::*;
+pub use circuit::VarBack;
 
 /// This is a verifying key which allows for the verification of proofs for a
 /// particular circuit.
@@ -231,8 +234,13 @@ impl<C: CurveAffine> VerifyingKey<C> {
     }
 
     /// Returns `ConstraintSystem`
-    pub(crate) fn cs(&self) -> &ConstraintSystemBack<C::Scalar> {
+    pub fn cs(&self) -> &ConstraintSystemBack<C::Scalar> {
         &self.cs
+    }
+
+    /// Returns permutation verifying key
+    pub fn permutation(&self) -> &permutation::VerifyingKey<C> {
+        &self.permutation
     }
 
     /// Returns representative of this `VerifyingKey` in transcripts

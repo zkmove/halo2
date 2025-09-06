@@ -8,13 +8,13 @@ use halo2_middleware::{lookup, permutation::ArgumentMid, shuffle};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct QueryBack {
     /// Query index
-    pub(crate) index: usize,
+    pub index: usize,
     /// Column index
-    pub(crate) column_index: usize,
+    pub column_index: usize,
     /// The type of the column.
-    pub(crate) column_type: Any,
+    pub column_type: Any,
     /// Rotation of this query
-    pub(crate) rotation: Rotation,
+    pub rotation: Rotation,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -51,7 +51,7 @@ impl Variable for VarBack {
     }
 }
 
-pub(crate) type ExpressionBack<F> = Expression<F, VarBack>;
+pub type ExpressionBack<F> = Expression<F, VarBack>;
 pub(crate) type GateBack<F> = Gate<F, VarBack>;
 pub(crate) type LookupArgumentBack<F> = lookup::Argument<F, VarBack>;
 pub(crate) type ShuffleArgumentBack<F> = shuffle::Argument<F, VarBack>;
@@ -103,7 +103,7 @@ pub struct ConstraintSystemBack<F: Field> {
 impl<F: Field> ConstraintSystemBack<F> {
     /// Compute the degree of the constraint system (the maximum degree of all
     /// constraints).
-    pub(crate) fn degree(&self) -> usize {
+    pub fn degree(&self) -> usize {
         // The permutation argument will serve alongside the gates, so must be
         // accounted for.
         let mut degree = permutation_argument_required_degree();
@@ -231,6 +231,41 @@ impl<F: Field> ConstraintSystemBack<F> {
             minimum_degree: &self.minimum_degree,
         }
     }
+
+    pub fn gates(&self) -> &[GateBack<F>] {
+        &self.gates
+    }
+    pub fn lookups(&self) -> &[LookupArgumentBack<F>] {
+        &self.lookups
+    }
+    pub fn shuffles(&self) -> &[ShuffleArgumentBack<F>] {
+        &self.shuffles
+    }
+    pub fn advice_queries(&self) -> &[(ColumnMid, Rotation)] {
+        &self.advice_queries
+    }
+    pub fn fixed_queries(&self) -> &[(ColumnMid, Rotation)] {
+        &self.fixed_queries
+    }
+    pub fn instance_queries(&self) -> &[(ColumnMid, Rotation)] {
+        &self.instance_queries
+    }
+    pub fn permutation(&self) -> &PermutationArgumentBack {
+        &self.permutation
+    }
+    pub fn num_fixed_columns(&self) -> usize {
+        self.num_fixed_columns
+    }
+    pub fn num_instance_columns(&self) -> usize {
+        self.num_instance_columns
+    }
+    pub fn advice_column_phase(&self) -> &[u8] {
+        &self.advice_column_phase
+    }
+    pub fn challenge_phase(&self) -> &[u8] {
+        &self.challenge_phase
+}
+
 }
 
 struct PinnedGates<'a, F: Field>(&'a Vec<GateBack<F>>);
