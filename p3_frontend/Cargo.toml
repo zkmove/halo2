@@ -36,3 +36,6 @@ p3-keccak-air = { git = "https://github.com/Plonky3/Plonky3", rev = "7b5b8a6" }
 p3-keccak = { git = "https://github.com/Plonky3/Plonky3", rev = "7b5b8a6" }
 p3-util = { git = "https://github.com/Plonky3/Plonky3", rev = "7b5b8a6" }
 rand = "0.8.5"
+
+[patch.crates-io]
+halo2curves = { git = "https://github.com/zkmove/halo2curves", branch = "main" }
