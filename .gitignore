@@ -4,6 +4,7 @@ Cargo.lock
 .vscode
 **/*.html
 .DS_Store
+.idea
 
 layout.png
 serialization-test.pk

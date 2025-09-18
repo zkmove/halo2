@@ -39,6 +39,16 @@ pub mod verifier;
 pub use error::*;
 pub use circuit::VarBack;
 
+// use hex;
+// pub fn print_scalar_le_hex<C: CurveAffine>(prefix: &str, scalar: &C::Scalar) {
+//     let big_hex = format!("{:?}", scalar);
+//     let hex_no_prefix = big_hex.trim_start_matches("0x");
+//     let mut bytes: Vec<u8> = hex::decode(hex_no_prefix).expect("Invalid hex");
+//     bytes.reverse();
+//     let le_hex = format!("0x{}", hex::encode(bytes));
+//     println!("{}: {}", prefix, le_hex);
+// }
+
 /// This is a verifying key which allows for the verification of proofs for a
 /// particular circuit.
 #[derive(Clone, Debug)]
