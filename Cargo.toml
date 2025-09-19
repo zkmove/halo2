@@ -9,3 +9,6 @@ members = [
     "p3_frontend",
 ]
 resolver = "2"
+
+[patch.crates-io]
+halo2curves = { git = "https://github.com/zkmove/halo2curves", branch = "sign-mark" }
