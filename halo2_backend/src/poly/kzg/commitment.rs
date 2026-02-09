@@ -358,6 +358,18 @@ where
             s_g2,
         })
     }
+
+    pub fn g(&self) -> &[E::G1Affine] {
+        &self.g
+    }
+
+    pub fn g2(&self) -> &E::G2Affine {
+        &self.g2
+    }
+
+    pub fn s_g2(&self) -> &E::G2Affine {
+        &self.s_g2
+    }
 }
 
 impl<E: Engine> Params<E::G1Affine> for ParamsKZG<E>
