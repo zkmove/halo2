@@ -226,8 +226,8 @@ impl<F: Field> ConstraintSystemBack<F> {
             advice_queries: &self.advice_queries,
             instance_queries: &self.instance_queries,
             permutation: &self.permutation,
-            lookups: &self.lookups,
-            shuffles: &self.shuffles,
+            lookups: PinnedLookups(&self.lookups),
+            shuffles: PinnedShuffles(&self.shuffles),
             minimum_degree: &self.minimum_degree,
         }
     }
@@ -277,6 +277,34 @@ impl<'a, F: Field> std::fmt::Debug for PinnedGates<'a, F> {
     }
 }
 
+struct PinnedLookups<'a, F: Field>(&'a Vec<LookupArgumentBack<F>>);
+
+impl<'a, F: Field> std::fmt::Debug for PinnedLookups<'a, F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        f.debug_list()
+            .entries(
+                self.0
+                    .iter()
+                    .map(|lookup| (&lookup.input_expressions, &lookup.table_expressions)),
+            )
+            .finish()
+    }
+}
+
+struct PinnedShuffles<'a, F: Field>(&'a Vec<ShuffleArgumentBack<F>>);
+
+impl<'a, F: Field> std::fmt::Debug for PinnedShuffles<'a, F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        f.debug_list()
+            .entries(
+                self.0
+                    .iter()
+                    .map(|shuffle| (&shuffle.input_expressions, &shuffle.shuffle_expressions)),
+            )
+            .finish()
+    }
+}
+
 /// Represents the minimal parameters that determine a `ConstraintSystem`.
 #[allow(dead_code)]
 #[derive(Debug)]
@@ -292,8 +320,8 @@ pub(crate) struct PinnedConstraintSystem<'a, F: Field> {
     instance_queries: &'a Vec<(ColumnMid, Rotation)>,
     fixed_queries: &'a Vec<(ColumnMid, Rotation)>,
     permutation: &'a PermutationArgumentBack,
-    lookups: &'a Vec<LookupArgumentBack<F>>,
-    shuffles: &'a Vec<ShuffleArgumentBack<F>>,
+    lookups: PinnedLookups<'a, F>,
+    shuffles: PinnedShuffles<'a, F>,
     minimum_degree: &'a Option<usize>,
 }
 
