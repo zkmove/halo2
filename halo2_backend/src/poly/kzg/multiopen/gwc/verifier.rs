@@ -76,37 +76,44 @@ where
         for ((commitment_at_a_point, wi), power_of_u) in
             commitment_data.iter().zip(w.into_iter()).zip(powers(*u))
         {
-            assert!(!commitment_at_a_point.queries.is_empty());
+            if commitment_at_a_point.queries.is_empty() {
+                return Err(Error::OpeningError);
+            }
             let z = commitment_at_a_point.point;
 
-            let (mut commitment_batch, eval_batch) = commitment_at_a_point
-                .queries
-                .iter()
-                .zip(powers(*v))
-                .map(|(query, power_of_v)| {
-                    assert_eq!(query.get_point(), z);
-
-                    let commitment = match query.get_commitment() {
-                        CommitmentReference::Commitment(c) => {
-                            let mut msm = MSMKZG::<E>::new();
-                            msm.append_term(power_of_v, (*c).into());
-                            msm
+            let mut query_batches =
+                commitment_at_a_point
+                    .queries
+                    .iter()
+                    .zip(powers(*v))
+                    .map(|(query, power_of_v)| {
+                        if query.get_point() != z {
+                            return Err(Error::OpeningError);
                         }
-                        CommitmentReference::MSM(msm) => {
-                            let mut msm = msm.clone();
-                            msm.scale(power_of_v);
-                            msm
-                        }
-                    };
-                    let eval = power_of_v * query.get_eval();
 
-                    (commitment, eval)
-                })
-                .reduce(|(mut commitment_acc, eval_acc), (commitment, eval)| {
-                    commitment_acc.add_msm(&commitment);
-                    (commitment_acc, eval_acc + eval)
-                })
-                .unwrap();
+                        let commitment = match query.get_commitment() {
+                            CommitmentReference::Commitment(c) => {
+                                let mut msm = MSMKZG::<E>::new();
+                                msm.append_term(power_of_v, (*c).into());
+                                msm
+                            }
+                            CommitmentReference::MSM(msm) => {
+                                let mut msm = msm.clone();
+                                msm.scale(power_of_v);
+                                msm
+                            }
+                        };
+                        let eval = power_of_v * query.get_eval();
+
+                        Ok((commitment, eval))
+                    });
+            let (mut commitment_batch, mut eval_batch) =
+                query_batches.next().ok_or(Error::OpeningError)??;
+            for item in query_batches {
+                let (commitment, eval) = item?;
+                commitment_batch.add_msm(&commitment);
+                eval_batch += eval;
+            }
 
             commitment_batch.scale(power_of_u);
             commitment_multi.add_msm(&commitment_batch);

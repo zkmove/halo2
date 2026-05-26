@@ -6,7 +6,6 @@ use halo2_middleware::circuit::Any;
 use halo2_middleware::ff::{Field, FromUniformBytes, WithSmallOrderMulGroup};
 use halo2_middleware::zal::impls::H2cEngine;
 use halo2curves::CurveAffine;
-use std::iter;
 
 use super::{vanishing, VerifyingKey};
 use crate::arithmetic::compute_inner_product;
@@ -373,89 +372,93 @@ where
         let l_0 = l_evals[1 + blinding_factors];
 
         // Compute the expected value of h(x)
-        let expressions = advice_evals
+        let mut expressions = Vec::new();
+        for ((((advice_evals, instance_evals), permutation), lookups), shuffles) in advice_evals
             .iter()
             .zip(instance_evals.iter())
             .zip(permutations_evaluated.iter())
             .zip(lookups_evaluated.iter())
             .zip(shuffles_evaluated.iter())
-            .flat_map(
-                |((((advice_evals, instance_evals), permutation), lookups), shuffles)| {
-                    let challenges = &challenges;
-                    let fixed_evals = &fixed_evals;
-                    std::iter::empty()
-                        // Evaluate the circuit using the custom gates provided
-                        .chain(vk.cs.gates.iter().map(move |gate| {
-                            gate.poly.evaluate(
-                                &|scalar| scalar,
-                                &|var| match var {
-                                    VarBack::Query(query) => match query.column_type {
-                                        Any::Fixed => fixed_evals[query.index],
-                                        Any::Advice => advice_evals[query.index],
-                                        Any::Instance => instance_evals[query.index],
-                                    },
-                                    VarBack::Challenge(challenge) => challenges[challenge.index],
-                                },
-                                &|a| -a,
-                                &|a, b| a + b,
-                                &|a, b| a * b,
-                            )
-                        }))
-                        .chain(permutation.expressions(
-                            vk,
-                            &vk.cs.permutation,
-                            &permutations_common,
-                            advice_evals,
-                            fixed_evals,
-                            instance_evals,
-                            l_0,
-                            l_last,
-                            l_blind,
-                            beta,
-                            gamma,
-                            x,
-                        ))
-                        .chain(lookups.iter().zip(vk.cs.lookups.iter()).flat_map(
-                            move |(p, argument)| {
-                                p.expressions(
-                                    l_0,
-                                    l_last,
-                                    l_blind,
-                                    argument,
-                                    theta,
-                                    beta,
-                                    gamma,
-                                    advice_evals,
-                                    fixed_evals,
-                                    instance_evals,
-                                    challenges,
-                                )
-                            },
-                        ))
-                        .chain(shuffles.iter().zip(vk.cs.shuffles.iter()).flat_map(
-                            move |(p, argument)| {
-                                p.expressions(
-                                    l_0,
-                                    l_last,
-                                    l_blind,
-                                    argument,
-                                    theta,
-                                    gamma,
-                                    advice_evals,
-                                    fixed_evals,
-                                    instance_evals,
-                                    challenges,
-                                )
-                            },
-                        ))
-                },
-            );
+        {
+            // Evaluate the circuit using the custom gates provided
+            expressions.extend(vk.cs.gates.iter().map(|gate| {
+                gate.poly.evaluate(
+                    &|scalar| scalar,
+                    &|var| match var {
+                        VarBack::Query(query) => match query.column_type {
+                            Any::Fixed => fixed_evals[query.index],
+                            Any::Advice => advice_evals[query.index],
+                            Any::Instance => instance_evals[query.index],
+                        },
+                        VarBack::Challenge(challenge) => challenges[challenge.index],
+                    },
+                    &|a| -a,
+                    &|a, b| a + b,
+                    &|a, b| a * b,
+                )
+            }));
 
-        vanishing.verify(params, expressions, y, xn)
+            expressions.extend(permutation.expressions(
+                vk,
+                &vk.cs.permutation,
+                &permutations_common,
+                advice_evals,
+                &fixed_evals,
+                instance_evals,
+                l_0,
+                l_last,
+                l_blind,
+                beta,
+                gamma,
+                x,
+            )?);
+
+            for (p, argument) in lookups.iter().zip(vk.cs.lookups.iter()) {
+                expressions.extend(p.expressions(
+                    l_0,
+                    l_last,
+                    l_blind,
+                    argument,
+                    theta,
+                    beta,
+                    gamma,
+                    advice_evals,
+                    &fixed_evals,
+                    instance_evals,
+                    &challenges,
+                ));
+            }
+
+            for (p, argument) in shuffles.iter().zip(vk.cs.shuffles.iter()) {
+                expressions.extend(p.expressions(
+                    l_0,
+                    l_last,
+                    l_blind,
+                    argument,
+                    theta,
+                    gamma,
+                    advice_evals,
+                    &fixed_evals,
+                    instance_evals,
+                    &challenges,
+                ));
+            }
+        }
+
+        vanishing.verify(params, expressions.into_iter(), y, xn)?
     };
 
-    #[rustfmt::skip]
-    let queries = instance_commitments
+    let mut queries = Vec::new();
+    for (
+        (
+            (
+                (((instance_commitments, instance_evals), advice_commitments), advice_evals),
+                permutation,
+            ),
+            lookups,
+        ),
+        shuffles,
+    ) in instance_commitments
         .iter()
         .zip(instance_evals.iter())
         .zip(advice_commitments.iter())
@@ -463,51 +466,49 @@ where
         .zip(permutations_evaluated.iter())
         .zip(lookups_evaluated.iter())
         .zip(shuffles_evaluated.iter())
-        .flat_map(|((((((instance_commitments, instance_evals), advice_commitments),advice_evals),permutation),lookups),shuffles)| {
-                iter::empty()
-                    .chain(
-                        V::QUERY_INSTANCE
-                            .then_some(vk.cs.instance_queries.iter().enumerate().map(
-                                move |(query_index, &(column, at))| {
-                                    VerifierQuery::new_commitment(
-                                        &instance_commitments[column.index],
-                                        vk.domain.rotate_omega(*x, at),
-                                        instance_evals[query_index],
-                                    )
-                                },
-                            ))
-                            .into_iter()
-                            .flatten(),
-                    )
-                    .chain(vk.cs.advice_queries.iter().enumerate().map(
-                        move |(query_index, &(column, at))| {
-                            VerifierQuery::new_commitment(
-                                &advice_commitments[column.index],
-                                vk.domain.rotate_omega(*x, at),
-                                advice_evals[query_index],
-                            )
-                        },
-                    ))
-                    .chain(permutation.queries(vk, x))
-                    .chain(lookups.iter().flat_map(move |p| p.queries(vk, x)))
-                    .chain(shuffles.iter().flat_map(move |p| p.queries(vk, x)))
-            },
-        )
-        .chain(
-            vk.cs
-                .fixed_queries
-                .iter()
-                .enumerate()
-                .map(|(query_index, &(column, at))| {
+    {
+        if V::QUERY_INSTANCE {
+            queries.extend(vk.cs.instance_queries.iter().enumerate().map(
+                |(query_index, &(column, at))| {
                     VerifierQuery::new_commitment(
-                        &vk.fixed_commitments[column.index],
+                        &instance_commitments[column.index],
                         vk.domain.rotate_omega(*x, at),
-                        fixed_evals[query_index],
+                        instance_evals[query_index],
                     )
-                }),
-        )
-        .chain(permutations_common.queries(&vk.permutation, x))
-        .chain(vanishing.queries(x));
+                },
+            ));
+        }
+
+        queries.extend(vk.cs.advice_queries.iter().enumerate().map(
+            |(query_index, &(column, at))| {
+                VerifierQuery::new_commitment(
+                    &advice_commitments[column.index],
+                    vk.domain.rotate_omega(*x, at),
+                    advice_evals[query_index],
+                )
+            },
+        ));
+
+        queries.extend(permutation.queries(vk, x)?);
+        queries.extend(lookups.iter().flat_map(|p| p.queries(vk, x)));
+        queries.extend(shuffles.iter().flat_map(|p| p.queries(vk, x)));
+    }
+
+    queries.extend(
+        vk.cs
+            .fixed_queries
+            .iter()
+            .enumerate()
+            .map(|(query_index, &(column, at))| {
+                VerifierQuery::new_commitment(
+                    &vk.fixed_commitments[column.index],
+                    vk.domain.rotate_omega(*x, at),
+                    fixed_evals[query_index],
+                )
+            }),
+    );
+    queries.extend(permutations_common.queries(&vk.permutation, x));
+    queries.extend(vanishing.queries(x));
 
     // We are now convinced the circuit is satisfied so long as the
     // polynomial commitments open to the correct values.
@@ -515,7 +516,7 @@ where
     let verifier = V::new();
     strategy.process(|msm| {
         verifier
-            .verify_proof(transcript, queries, msm)
+            .verify_proof(transcript, queries.into_iter(), msm)
             .map_err(|_| Error::Opening)
     })
 }

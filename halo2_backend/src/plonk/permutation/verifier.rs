@@ -1,6 +1,3 @@
-use halo2_middleware::ff::{Field, PrimeField};
-use std::iter;
-
 use super::{Argument, VerifyingKey};
 use crate::{
     arithmetic::CurveAffine,
@@ -9,6 +6,7 @@ use crate::{
     transcript::{EncodedChallenge, TranscriptRead},
 };
 use halo2_middleware::circuit::Any;
+use halo2_middleware::ff::{Field, PrimeField};
 use halo2_middleware::poly::Rotation;
 
 pub(crate) struct Committed<C: CurveAffine> {
@@ -113,128 +111,134 @@ impl<C: CurveAffine> Evaluated<C> {
         beta: ChallengeBeta<C>,
         gamma: ChallengeGamma<C>,
         x: ChallengeX<C>,
-    ) -> impl Iterator<Item = C::Scalar> + 'a {
+    ) -> Result<Vec<C::Scalar>, Error> {
         let chunk_len = vk.cs_degree - 2;
-        iter::empty()
-            // Enforce only for the first set.
-            // l_0(X) * (1 - z_0(X)) = 0
-            .chain(
-                self.sets
-                    .first()
-                    .map(|first_set| l_0 * (C::Scalar::ONE - first_set.permutation_product_eval)),
-            )
-            // Enforce only for the last set.
-            // l_last(X) * (z_l(X)^2 - z_l(X)) = 0
-            .chain(self.sets.last().map(|last_set| {
+        let mut expressions = Vec::new();
+
+        // Enforce only for the first set.
+        // l_0(X) * (1 - z_0(X)) = 0
+        if let Some(first_set) = self.sets.first() {
+            expressions.push(l_0 * (C::Scalar::ONE - first_set.permutation_product_eval));
+        }
+
+        // Enforce only for the last set.
+        // l_last(X) * (z_l(X)^2 - z_l(X)) = 0
+        if let Some(last_set) = self.sets.last() {
+            expressions.push(
                 (last_set.permutation_product_eval.square() - last_set.permutation_product_eval)
-                    * l_last
-            }))
-            // Except for the first set, enforce.
-            // l_0(X) * (z_i(X) - z_{i-1}(\omega^(last) X)) = 0
-            .chain(
-                self.sets
-                    .iter()
-                    .skip(1)
-                    .zip(self.sets.iter())
-                    .map(|(set, last_set)| {
-                        (
-                            set.permutation_product_eval,
-                            last_set.permutation_product_last_eval.unwrap(),
-                        )
-                    })
-                    .map(move |(set, prev_last)| (set - prev_last) * l_0),
-            )
-            // And for all the sets we enforce:
-            // (1 - (l_last(X) + l_blind(X))) * (
-            //   z_i(\omega X) \prod (p(X) + \beta s_i(X) + \gamma)
-            // - z_i(X) \prod (p(X) + \delta^i \beta X + \gamma)
-            // )
-            .chain(
-                self.sets
-                    .iter()
-                    .zip(p.columns.chunks(chunk_len))
-                    .zip(common.permutation_evals.chunks(chunk_len))
-                    .enumerate()
-                    .map(move |(chunk_index, ((set, columns), permutation_evals))| {
-                        let mut left = set.permutation_product_next_eval;
-                        for (eval, permutation_eval) in columns
-                            .iter()
-                            .map(|&column| match column.column_type {
-                                Any::Advice => {
-                                    advice_evals[vk.cs.get_any_query_index(column, Rotation::cur())]
-                                }
-                                Any::Fixed => {
-                                    fixed_evals[vk.cs.get_any_query_index(column, Rotation::cur())]
-                                }
-                                Any::Instance => {
-                                    instance_evals
-                                        [vk.cs.get_any_query_index(column, Rotation::cur())]
-                                }
-                            })
-                            .zip(permutation_evals.iter())
-                        {
-                            left *= eval + (*beta * permutation_eval) + *gamma;
-                        }
+                    * l_last,
+            );
+        }
 
-                        let mut right = set.permutation_product_eval;
-                        let mut current_delta = (*beta * *x)
-                            * (<C::Scalar as PrimeField>::DELTA
-                                .pow_vartime([(chunk_index * chunk_len) as u64]));
-                        for eval in columns.iter().map(|&column| match column.column_type {
-                            Any::Advice => {
-                                advice_evals[vk.cs.get_any_query_index(column, Rotation::cur())]
-                            }
-                            Any::Fixed => {
-                                fixed_evals[vk.cs.get_any_query_index(column, Rotation::cur())]
-                            }
-                            Any::Instance => {
-                                instance_evals[vk.cs.get_any_query_index(column, Rotation::cur())]
-                            }
-                        }) {
-                            right *= eval + current_delta + *gamma;
-                            current_delta *= &C::Scalar::DELTA;
-                        }
+        // Except for the first set, enforce.
+        // l_0(X) * (z_i(X) - z_{i-1}(\omega^(last) X)) = 0
+        for (set, last_set) in self.sets.iter().skip(1).zip(self.sets.iter()) {
+            let prev_last = last_set
+                .permutation_product_last_eval
+                .ok_or(Error::BoundsFailure)?;
+            expressions.push((set.permutation_product_eval - prev_last) * l_0);
+        }
 
-                        (left - right) * (C::Scalar::ONE - (l_last + l_blind))
-                    }),
-            )
+        // And for all the sets we enforce:
+        // (1 - (l_last(X) + l_blind(X))) * (
+        //   z_i(\omega X) \prod (p(X) + \beta s_i(X) + \gamma)
+        // - z_i(X) \prod (p(X) + \delta^i \beta X + \gamma)
+        // )
+        for (chunk_index, ((set, columns), permutation_evals)) in self
+            .sets
+            .iter()
+            .zip(p.columns.chunks(chunk_len))
+            .zip(common.permutation_evals.chunks(chunk_len))
+            .enumerate()
+        {
+            let mut left = set.permutation_product_next_eval;
+            for (&column, permutation_eval) in columns.iter().zip(permutation_evals.iter()) {
+                let query_index = vk.cs.get_any_query_index(column, Rotation::cur())?;
+                let eval = match column.column_type {
+                    Any::Advice => advice_evals
+                        .get(query_index)
+                        .copied()
+                        .ok_or(Error::BoundsFailure)?,
+                    Any::Fixed => fixed_evals
+                        .get(query_index)
+                        .copied()
+                        .ok_or(Error::BoundsFailure)?,
+                    Any::Instance => instance_evals
+                        .get(query_index)
+                        .copied()
+                        .ok_or(Error::BoundsFailure)?,
+                };
+                left *= eval + (*beta * permutation_eval) + *gamma;
+            }
+
+            let mut right = set.permutation_product_eval;
+            let mut current_delta = (*beta * *x)
+                * (<C::Scalar as PrimeField>::DELTA
+                    .pow_vartime([(chunk_index * chunk_len) as u64]));
+            for &column in columns.iter() {
+                let query_index = vk.cs.get_any_query_index(column, Rotation::cur())?;
+                let eval = match column.column_type {
+                    Any::Advice => advice_evals
+                        .get(query_index)
+                        .copied()
+                        .ok_or(Error::BoundsFailure)?,
+                    Any::Fixed => fixed_evals
+                        .get(query_index)
+                        .copied()
+                        .ok_or(Error::BoundsFailure)?,
+                    Any::Instance => instance_evals
+                        .get(query_index)
+                        .copied()
+                        .ok_or(Error::BoundsFailure)?,
+                };
+                right *= eval + current_delta + *gamma;
+                current_delta *= &C::Scalar::DELTA;
+            }
+
+            expressions.push((left - right) * (C::Scalar::ONE - (l_last + l_blind)));
+        }
+
+        Ok(expressions)
     }
 
     pub(in crate::plonk) fn queries<'r, M: MSM<C> + 'r>(
         &'r self,
         vk: &'r plonk::VerifyingKey<C>,
         x: ChallengeX<C>,
-    ) -> impl Iterator<Item = VerifierQuery<'r, C, M>> + Clone {
+    ) -> Result<Vec<VerifierQuery<'r, C, M>>, Error> {
         let blinding_factors = vk.cs.blinding_factors();
         let x_next = vk.domain.rotate_omega(*x, Rotation::next());
         let x_last = vk
             .domain
             .rotate_omega(*x, Rotation(-((blinding_factors + 1) as i32)));
 
-        iter::empty()
-            .chain(self.sets.iter().flat_map(move |set| {
-                iter::empty()
-                    // Open permutation product commitments at x and \omega^{-1} x
-                    // Open permutation product commitments at x and \omega x
-                    .chain(Some(VerifierQuery::new_commitment(
-                        &set.permutation_product_commitment,
-                        *x,
-                        set.permutation_product_eval,
-                    )))
-                    .chain(Some(VerifierQuery::new_commitment(
-                        &set.permutation_product_commitment,
-                        x_next,
-                        set.permutation_product_next_eval,
-                    )))
-            }))
-            // Open it at \omega^{last} x for all but the last set
-            .chain(self.sets.iter().rev().skip(1).flat_map(move |set| {
-                Some(VerifierQuery::new_commitment(
-                    &set.permutation_product_commitment,
-                    x_last,
-                    set.permutation_product_last_eval.unwrap(),
-                ))
-            }))
+        let mut queries = Vec::new();
+        for set in self.sets.iter() {
+            // Open permutation product commitments at x and \omega^{-1} x
+            // Open permutation product commitments at x and \omega x
+            queries.push(VerifierQuery::new_commitment(
+                &set.permutation_product_commitment,
+                *x,
+                set.permutation_product_eval,
+            ));
+            queries.push(VerifierQuery::new_commitment(
+                &set.permutation_product_commitment,
+                x_next,
+                set.permutation_product_next_eval,
+            ));
+        }
+
+        // Open it at \omega^{last} x for all but the last set
+        for set in self.sets.iter().rev().skip(1) {
+            queries.push(VerifierQuery::new_commitment(
+                &set.permutation_product_commitment,
+                x_last,
+                set.permutation_product_last_eval
+                    .ok_or(Error::BoundsFailure)?,
+            ));
+        }
+
+        Ok(queries)
     }
 }
 
@@ -249,5 +253,124 @@ impl<C: CurveAffine> CommonEvaluated<C> {
             .iter()
             .zip(self.permutation_evals.iter())
             .map(move |(commitment, &eval)| VerifierQuery::new_commitment(commitment, *x, eval))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plonk::circuit::ConstraintSystemBack;
+    use crate::poly::{kzg::msm::MSMKZG, EvaluationDomain};
+    use group::prime::PrimeCurveAffine;
+    use halo2_middleware::circuit::{Any, ColumnMid};
+    use halo2curves::bn256::{Bn256, Fr, G1Affine};
+
+    fn advice_column(index: usize) -> ColumnMid {
+        ColumnMid::new(Any::Advice, index)
+    }
+
+    fn empty_cs() -> ConstraintSystemBack<Fr> {
+        ConstraintSystemBack {
+            num_fixed_columns: 0,
+            num_advice_columns: 1,
+            num_instance_columns: 0,
+            num_challenges: 0,
+            unblinded_advice_columns: Vec::new(),
+            advice_column_phase: vec![0],
+            challenge_phase: Vec::new(),
+            gates: Vec::new(),
+            advice_queries: Vec::new(),
+            num_advice_queries: vec![0],
+            instance_queries: Vec::new(),
+            fixed_queries: Vec::new(),
+            permutation: Argument {
+                columns: vec![advice_column(0)],
+            },
+            lookups: Vec::new(),
+            shuffles: Vec::new(),
+            minimum_degree: Some(3),
+        }
+    }
+
+    fn vk_with_cs(cs: ConstraintSystemBack<Fr>) -> plonk::VerifyingKey<G1Affine> {
+        plonk::VerifyingKey {
+            domain: EvaluationDomain::new(2, 4),
+            fixed_commitments: Vec::new(),
+            permutation: VerifyingKey {
+                commitments: Vec::new(),
+            },
+            cs,
+            cs_degree: 3,
+            transcript_repr: Fr::zero(),
+        }
+    }
+
+    fn evaluated_with_missing_previous_last_eval() -> Evaluated<G1Affine> {
+        let commitment = G1Affine::identity();
+        Evaluated {
+            sets: vec![
+                EvaluatedSet {
+                    permutation_product_commitment: commitment,
+                    permutation_product_eval: Fr::one(),
+                    permutation_product_next_eval: Fr::one(),
+                    permutation_product_last_eval: None,
+                },
+                EvaluatedSet {
+                    permutation_product_commitment: commitment,
+                    permutation_product_eval: Fr::one(),
+                    permutation_product_next_eval: Fr::one(),
+                    permutation_product_last_eval: None,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn missing_permutation_last_eval_returns_error_in_expressions() {
+        let vk = vk_with_cs(empty_cs());
+        let evaluated = evaluated_with_missing_previous_last_eval();
+        let common = CommonEvaluated {
+            permutation_evals: vec![Fr::one(), Fr::one()],
+        };
+        let argument = Argument {
+            columns: vec![advice_column(0), advice_column(0)],
+        };
+
+        let result = evaluated.expressions(
+            &vk,
+            &argument,
+            &common,
+            &[Fr::one()],
+            &[],
+            &[],
+            Fr::one(),
+            Fr::one(),
+            Fr::zero(),
+            ChallengeBeta::new_for_testing(Fr::one()),
+            ChallengeGamma::new_for_testing(Fr::one()),
+            ChallengeX::new_for_testing(Fr::one()),
+        );
+
+        assert!(matches!(result, Err(Error::BoundsFailure)));
+    }
+
+    #[test]
+    fn missing_permutation_last_eval_returns_error_in_queries() {
+        let vk = vk_with_cs(empty_cs());
+        let evaluated = evaluated_with_missing_previous_last_eval();
+
+        let result =
+            evaluated.queries::<MSMKZG<Bn256>>(&vk, ChallengeX::new_for_testing(Fr::one()));
+
+        assert!(matches!(result, Err(Error::BoundsFailure)));
+    }
+
+    #[test]
+    fn missing_any_query_index_returns_error() {
+        let cs = empty_cs();
+
+        let result = cs.get_any_query_index(advice_column(0), Rotation::cur());
+
+        assert!(matches!(result, Err(Error::BoundsFailure)));
     }
 }

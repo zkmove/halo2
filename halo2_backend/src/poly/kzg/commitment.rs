@@ -16,6 +16,13 @@ use std::io;
 
 use super::msm::MSMKZG;
 
+const MAX_KZG_VERIFIER_K: u32 = 31;
+const MAX_KZG_PROVER_K: u32 = 20;
+
+fn invalid_data(message: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message.into())
+}
+
 /// These are the public parameters for the polynomial commitment scheme.
 #[derive(Debug, Clone)]
 pub struct ParamsKZG<E: Engine> {
@@ -112,8 +119,11 @@ where
         let mut k = [0u8; 4];
         reader.read_exact(&mut k[..])?;
         let k = u32::from_le_bytes(k);
-        // This is a generous bound on the size of the domain.
-        debug_assert!(k < 32);
+        if k > MAX_KZG_VERIFIER_K {
+            return Err(invalid_data(format!(
+                "KZG verifier parameter k {k} exceeds maximum {MAX_KZG_VERIFIER_K}",
+            )));
+        }
 
         let s_g2 = E::G2Affine::read(reader, format)?;
 
@@ -281,7 +291,14 @@ where
         let mut k = [0u8; 4];
         reader.read_exact(&mut k[..])?;
         let k = u32::from_le_bytes(k);
-        let n = 1 << k;
+        if k > MAX_KZG_PROVER_K {
+            return Err(invalid_data(format!(
+                "KZG prover parameter k {k} exceeds maximum {MAX_KZG_PROVER_K}",
+            )));
+        }
+        let n = 1usize
+            .checked_shl(k)
+            .ok_or_else(|| invalid_data(format!("invalid KZG parameter k {k}")))?;
 
         let (g, g_lagrange) = match format {
             SerdeFormat::Processed => {

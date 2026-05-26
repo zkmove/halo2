@@ -75,9 +75,17 @@ where
         let u: ChallengeU<_> = transcript.squeeze_challenge_scalar();
         let h2 = transcript.read_point().map_err(|_| Error::SamplingError)?;
 
+        if rotation_sets.is_empty() {
+            return Err(Error::OpeningError);
+        }
+
         let (mut z_0_diff_inverse, mut z_0) = (E::Fr::ZERO, E::Fr::ZERO);
         let (mut outer_msm, mut r_outer_acc) = (PreMSM::<E>::default(), E::Fr::ZERO);
         for (i, (rotation_set, power_of_v)) in rotation_sets.iter().zip(powers(*v)).enumerate() {
+            if rotation_set.commitments.is_empty() {
+                return Err(Error::OpeningError);
+            }
+
             let diffs: Vec<E::Fr> = super_point_set
                 .iter()
                 .filter(|point| !rotation_set.points.contains(point))
@@ -88,17 +96,15 @@ where
             // normalize coefficients by the coefficient of the first commitment
             if i == 0 {
                 z_0 = evaluate_vanishing_polynomial(&rotation_set.points[..], *u);
-                z_0_diff_inverse = z_diff_i.invert().unwrap();
+                z_0_diff_inverse =
+                    Option::<E::Fr>::from(z_diff_i.invert()).ok_or(Error::OpeningError)?;
                 z_diff_i = E::Fr::ONE;
             } else {
                 z_diff_i.mul_assign(z_0_diff_inverse);
             }
 
-            let (mut inner_msm, r_inner_acc) = rotation_set
-                .commitments
-                .iter()
-                .zip(powers(*y))
-                .map(|(commitment_data, power_of_y)| {
+            let mut commitment_batches = rotation_set.commitments.iter().zip(powers(*y)).map(
+                |(commitment_data, power_of_y)| {
                     // calculate low degree equivalent
                     let r_x = lagrange_interpolate(
                         &rotation_set.points[..],
@@ -117,13 +123,16 @@ where
                             msm
                         }
                     };
-                    (msm, r_eval)
-                })
-                .reduce(|(mut msm_acc, r_eval_acc), (msm, r_eval)| {
-                    msm_acc.add_msm(&msm);
-                    (msm_acc, r_eval_acc + r_eval)
-                })
-                .unwrap();
+                    Ok((msm, r_eval))
+                },
+            );
+            let (mut inner_msm, mut r_inner_acc) =
+                commitment_batches.next().ok_or(Error::OpeningError)??;
+            for item in commitment_batches {
+                let (msm, r_eval) = item?;
+                inner_msm.add_msm(&msm);
+                r_inner_acc += r_eval;
+            }
 
             inner_msm.scale(power_of_v * z_diff_i);
             outer_msm.add_msm(inner_msm);

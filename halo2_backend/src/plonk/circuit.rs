@@ -1,3 +1,4 @@
+use crate::plonk::Error;
 use group::ff::Field;
 use halo2_middleware::circuit::{Any, ChallengeMid, ColumnMid, Gate};
 use halo2_middleware::expression::{Expression, Variable};
@@ -185,7 +186,11 @@ impl<F: Field> ConstraintSystemBack<F> {
             + 1 // for at least one row
     }
 
-    pub(crate) fn get_any_query_index(&self, column: ColumnMid, at: Rotation) -> usize {
+    pub(crate) fn get_any_query_index(
+        &self,
+        column: ColumnMid,
+        at: Rotation,
+    ) -> Result<usize, Error> {
         let queries = match column.column_type {
             Any::Advice => &self.advice_queries,
             Any::Fixed => &self.fixed_queries,
@@ -193,10 +198,10 @@ impl<F: Field> ConstraintSystemBack<F> {
         };
         for (index, instance_query) in queries.iter().enumerate() {
             if instance_query == &(column, at) {
-                return index;
+                return Ok(index);
             }
         }
-        panic!("get_any_query_index called for non-existent query");
+        Err(Error::BoundsFailure)
     }
 
     /// Returns the list of phases

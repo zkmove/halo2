@@ -92,9 +92,11 @@ impl<C: CurveAffine> PartiallyEvaluated<C> {
         expressions: impl Iterator<Item = C::Scalar>,
         y: ChallengeY<C>,
         xn: C::Scalar,
-    ) -> Evaluated<C, P::MSM> {
+    ) -> Result<Evaluated<C, P::MSM>, Error> {
         let expected_h_eval = expressions.fold(C::Scalar::ZERO, |h_eval, v| h_eval * *y + v);
-        let expected_h_eval = expected_h_eval * ((xn - C::Scalar::ONE).invert().unwrap());
+        let divisor_inv =
+            Option::<C::Scalar>::from((xn - C::Scalar::ONE).invert()).ok_or(Error::Opening)?;
+        let expected_h_eval = expected_h_eval * divisor_inv;
 
         let h_commitment =
             self.h_commitments
@@ -108,12 +110,12 @@ impl<C: CurveAffine> PartiallyEvaluated<C> {
                     acc
                 });
 
-        Evaluated {
+        Ok(Evaluated {
             expected_h_eval,
             h_commitment,
             random_poly_commitment: self.random_poly_commitment,
             random_eval: self.random_eval,
-        }
+        })
     }
 }
 

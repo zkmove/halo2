@@ -4,7 +4,6 @@
 use blake2b_simd::{Params as Blake2bParams, State as Blake2bState};
 use group::ff::{FromUniformBytes, PrimeField};
 use sha3::{Digest, Keccak256};
-use std::convert::TryInto;
 
 use halo2curves::{Coordinates, CurveAffine};
 
@@ -36,6 +35,13 @@ const KECCAK256_PREFIX_POINT: u8 = 1;
 
 /// Prefix to a prover's message containing a scalar
 const KECCAK256_PREFIX_SCALAR: u8 = 2;
+
+fn copy_challenge<const N: usize>(bytes: &[u8]) -> [u8; N] {
+    let mut challenge = [0u8; N];
+    let len = challenge.len().min(bytes.len());
+    challenge[..len].copy_from_slice(&bytes[..len]);
+    challenge
+}
 
 /// Generic transcript view (from either the prover or verifier's perspective)
 pub trait Transcript<C: CurveAffine, E: EncodedChallenge<C>> {
@@ -218,7 +224,7 @@ where
     fn squeeze_challenge(&mut self) -> Challenge255<C> {
         self.state.update(&[BLAKE2B_PREFIX_CHALLENGE]);
         let hasher = self.state.clone();
-        let result: [u8; 64] = hasher.finalize().as_bytes().try_into().unwrap();
+        let result = copy_challenge(hasher.finalize().as_bytes());
         Challenge255::<C>::new(&result)
     }
 
@@ -256,12 +262,11 @@ where
         let mut state_hi = self.state.clone();
         state_lo.update([KECCAK256_PREFIX_CHALLENGE_LO]);
         state_hi.update([KECCAK256_PREFIX_CHALLENGE_HI]);
-        let result_lo: [u8; 32] = state_lo.finalize().as_slice().try_into().unwrap();
-        let result_hi: [u8; 32] = state_hi.finalize().as_slice().try_into().unwrap();
-
-        let mut t = result_lo.to_vec();
-        t.extend_from_slice(&result_hi[..]);
-        let result: [u8; 64] = t.as_slice().try_into().unwrap();
+        let result_lo = copy_challenge::<32>(state_lo.finalize().as_slice());
+        let result_hi = copy_challenge::<32>(state_hi.finalize().as_slice());
+        let mut result = [0u8; 64];
+        result[..32].copy_from_slice(&result_lo);
+        result[32..].copy_from_slice(&result_hi);
 
         Challenge255::<C>::new(&result)
     }
@@ -392,7 +397,7 @@ where
     fn squeeze_challenge(&mut self) -> Challenge255<C> {
         self.state.update(&[BLAKE2B_PREFIX_CHALLENGE]);
         let hasher = self.state.clone();
-        let result: [u8; 64] = hasher.finalize().as_bytes().try_into().unwrap();
+        let result = copy_challenge(hasher.finalize().as_bytes());
         Challenge255::<C>::new(&result)
     }
 
@@ -430,12 +435,11 @@ where
         let mut state_hi = self.state.clone();
         state_lo.update([KECCAK256_PREFIX_CHALLENGE_LO]);
         state_hi.update([KECCAK256_PREFIX_CHALLENGE_HI]);
-        let result_lo: [u8; 32] = state_lo.finalize().as_slice().try_into().unwrap();
-        let result_hi: [u8; 32] = state_hi.finalize().as_slice().try_into().unwrap();
-
-        let mut t = result_lo.to_vec();
-        t.extend_from_slice(&result_hi[..]);
-        let result: [u8; 64] = t.as_slice().try_into().unwrap();
+        let result_lo = copy_challenge::<32>(state_lo.finalize().as_slice());
+        let result_hi = copy_challenge::<32>(state_hi.finalize().as_slice());
+        let mut result = [0u8; 64];
+        result[..32].copy_from_slice(&result_lo);
+        result[32..].copy_from_slice(&result_hi);
 
         Challenge255::<C>::new(&result)
     }
@@ -472,6 +476,16 @@ pub struct ChallengeScalar<C: CurveAffine, T> {
     _marker: PhantomData<T>,
 }
 
+#[cfg(test)]
+impl<C: CurveAffine, T> ChallengeScalar<C, T> {
+    pub(crate) fn new_for_testing(inner: C::Scalar) -> Self {
+        Self {
+            inner,
+            _marker: PhantomData,
+        }
+    }
+}
+
 impl<C: CurveAffine, T> std::ops::Deref for ChallengeScalar<C, T> {
     type Target = C::Scalar;
 
@@ -506,7 +520,7 @@ pub trait EncodedChallenge<C: CurveAffine> {
 
 /// A 255-bit challenge.
 #[derive(Copy, Clone, Debug)]
-pub struct Challenge255<C: CurveAffine>([u8; 32], PhantomData<C>);
+pub struct Challenge255<C: CurveAffine>([u8; 32], C::Scalar, PhantomData<C>);
 
 impl<C: CurveAffine> std::ops::Deref for Challenge255<C> {
     type Target = [u8; 32];
@@ -523,19 +537,17 @@ where
     type Input = [u8; 64];
 
     fn new(challenge_input: &[u8; 64]) -> Self {
-        Challenge255(
-            C::Scalar::from_uniform_bytes(challenge_input)
-                .to_repr()
-                .as_ref()
-                .try_into()
-                .expect("Scalar fits into 256 bits"),
-            PhantomData,
-        )
+        let scalar = C::Scalar::from_uniform_bytes(challenge_input);
+        let repr = scalar.to_repr();
+        let repr = repr.as_ref();
+        let mut challenge = [0u8; 32];
+        let len = challenge.len().min(repr.len());
+        challenge[..len].copy_from_slice(&repr[..len]);
+        Challenge255(challenge, scalar, PhantomData)
     }
+
     fn get_scalar(&self) -> C::Scalar {
-        let mut repr = <C::Scalar as PrimeField>::Repr::default();
-        repr.as_mut().copy_from_slice(&self.0);
-        C::Scalar::from_repr(repr).unwrap()
+        self.1
     }
 }
 
